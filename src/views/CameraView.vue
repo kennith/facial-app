@@ -157,15 +157,42 @@
         </div>
       </div>
 
+      <!-- Center-Top Body Posture Balance Indicator Badge -->
+      <div
+        v-if="isCameraStreaming && activeMode === 'body' && liveBalance"
+        class="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold backdrop-blur-md shadow-2xl transition-all duration-300 border"
+        :class="[
+          liveBalance.score >= 90
+            ? 'bg-emerald-950/85 border-emerald-500/80 text-emerald-300 shadow-emerald-900/40'
+            : liveBalance.score >= 80
+              ? 'bg-amber-950/85 border-amber-500/80 text-amber-300 shadow-amber-900/40'
+              : 'bg-rose-950/85 border-rose-500/80 text-rose-300 shadow-rose-900/40 animate-pulse'
+        ]"
+      >
+        <span
+          class="w-2.5 h-2.5 rounded-full"
+          :class="[
+            liveBalance.score >= 90
+              ? 'bg-emerald-400 animate-pulse'
+              : liveBalance.score >= 80
+                ? 'bg-amber-400'
+                : 'bg-rose-500'
+          ]"
+        ></span>
+        <Scale class="w-3.5 h-3.5" />
+        <span class="font-mono font-bold">{{ liveBalance.score }}%</span>
+        <span>{{ liveBalance.score >= 90 ? 'Balanced' : liveBalance.score >= 80 ? 'Moderate' : 'Unbalanced' }}</span>
+      </div>
+
       <!-- Active Video Recording Banner -->
       <div
         v-if="isRecordingVideo"
-        class="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2.5 bg-rose-950/90 backdrop-blur-md border border-rose-500/50 px-4 py-1.5 rounded-full text-xs text-white shadow-2xl shadow-rose-900/50 font-mono"
+        class="absolute top-11 sm:top-12 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-rose-950/90 backdrop-blur-md border border-rose-500/50 px-3 py-1 rounded-full text-[11px] text-white shadow-2xl shadow-rose-900/50 font-mono"
       >
-        <span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
+        <span class="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
         <span class="font-bold text-rose-300">REC</span>
         <span class="font-black text-white">{{ formatRecordingTime(recordingDuration) }}</span>
-        <span class="text-rose-400/80 hidden sm:inline">• Logging Power Metrics</span>
+        <span class="text-rose-400/80 hidden sm:inline">• Logging</span>
       </div>
 
       <!-- Real-time Live Indicators Badge Bar -->
@@ -225,6 +252,18 @@
           </button>
         </div>
       </div>
+
+      <!-- Stabilizer Mode Toggle Button -->
+      <button
+        v-if="isCameraStreaming && activeMode === 'body'"
+        @click="cycleStabilizerMode"
+        :title="`Stabilizer Mode: ${stabilizerMode}. Click to switch.`"
+        class="absolute top-3 right-12 z-30 flex items-center gap-1.5 bg-slate-900/80 backdrop-blur-md hover:bg-slate-800 text-xs px-3 py-1.5 rounded-lg border border-slate-800/80 transition"
+        :class="stabilizerMode === 'off' ? 'text-slate-500' : 'text-cyan-400 border-cyan-500/30'"
+      >
+        <Sparkles class="w-3.5 h-3.5 text-cyan-400" />
+        <span class="font-medium hidden sm:inline capitalize">{{ stabilizerMode.replace('_', ' ') }}</span>
+      </button>
 
       <!-- Mirror toggle badge -->
       <button
@@ -348,12 +387,15 @@ import {
   Flame,
   Trophy,
   Disc,
+  Scale,
+  Sparkles,
 } from 'lucide-vue-next';
 import { activeMode, setCapturedData, showToast } from '../services/appState';
 import { getFaceLandmarker, detectFacialParts, drawFeatureBoxes, processLandmarks } from '../services/faceDetector';
 import { getPoseLandmarker, detectPose, drawMatchstickFigure, processPoseLandmarks } from '../services/poseDetector';
 import { BiomechanicsTracker } from '../services/biomechanics';
 import { VideoSessionRecorder } from '../services/sessionRecorder';
+import { PoseLandmarkStabilizer } from '../services/temporalFilter';
 
 const router = useRouter();
 
@@ -370,6 +412,24 @@ const liveDetectedPartsCount = ref(0);
 
 const liveBiomechanics = new BiomechanicsTracker({ bodyWeightKg: 70 });
 const liveMetrics = ref(null);
+const liveBalance = ref(null);
+
+const poseStabilizer = new PoseLandmarkStabilizer('smooth');
+const stabilizerMode = ref('smooth'); // 'smooth' | 'extra_smooth' | 'responsive' | 'off'
+
+function cycleStabilizerMode() {
+  const modes = ['smooth', 'extra_smooth', 'responsive', 'off'];
+  const nextIdx = (modes.indexOf(stabilizerMode.value) + 1) % modes.length;
+  stabilizerMode.value = modes[nextIdx];
+  poseStabilizer.setMode(stabilizerMode.value);
+  const labels = {
+    smooth: 'Stabilizer: Smooth & Steady (Active)',
+    extra_smooth: 'Stabilizer: Extra Smooth (Freeze Jitter)',
+    responsive: 'Stabilizer: Fast Responsive',
+    off: 'Stabilizer: Off (Raw Jitter)',
+  };
+  showToast(labels[stabilizerMode.value], 'info');
+}
 
 const sessionRecorder = new VideoSessionRecorder();
 const isRecordingVideo = ref(false);
@@ -561,20 +621,24 @@ async function startLiveDetectionLoop() {
               liveDetectedPartsCount.value = processed.posesCount > 0 ? 33 : 0;
 
               if (processed.poseDetected) {
-                const leftAngle = processed.poses[0]?.stickman?.angles?.leftElbow;
-                const rightAngle = processed.poses[0]?.stickman?.angles?.rightElbow;
+                // Apply 1-Euro adaptive temporal stabilization filter to eliminate outline bouncing
+                const smoothed = poseStabilizer.smooth(processed, performance.now());
+
+                const leftAngle = smoothed.poses[0]?.stickman?.angles?.leftElbow;
+                const rightAngle = smoothed.poses[0]?.stickman?.angles?.rightElbow;
                 const metrics = liveBiomechanics.update({
                   leftAngle,
                   rightAngle,
                   timestamp: performance.now(),
                 });
                 liveMetrics.value = metrics;
+                liveBalance.value = smoothed.poses[0]?.stickman?.balance || null;
 
                 if (isRecordingVideo.value) {
                   sessionRecorder.logFrame(metrics);
                 }
 
-                drawMatchstickFigure(ctx, processed, {
+                drawMatchstickFigure(ctx, smoothed, {
                   isMirrored: isMirrored.value,
                   canvasWidth: canvas.width,
                   lineWidth: 3.5,
@@ -586,6 +650,9 @@ async function startLiveDetectionLoop() {
                   biomechanics: metrics,
                   showForceMetrics: true,
                 });
+              } else {
+                poseStabilizer.reset();
+                liveBalance.value = null;
               }
             }
           } else {

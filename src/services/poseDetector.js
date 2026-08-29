@@ -156,6 +156,17 @@ export function processPoseLandmarks(detectionResults, width, height) {
     const leftKneeAngle = calculateJointAngle(leftHip, leftKnee, leftAnkle);
     const rightKneeAngle = calculateJointAngle(rightHip, rightKnee, rightAnkle);
 
+    // Calculate body posture balance score
+    const balance = calculateBodyBalance({
+      leftShoulder,
+      rightShoulder,
+      leftHip,
+      rightHip,
+      neckBase,
+      pelvis,
+      head: { center: headCenter, radius: headRadius },
+    });
+
     return {
       poseIndex: idx,
       rawLandmarks: landmarks,
@@ -183,6 +194,7 @@ export function processPoseLandmarks(detectionResults, width, height) {
           leftKnee: leftKneeAngle,
           rightKnee: rightKneeAngle,
         },
+        balance,
       },
     };
   });
@@ -194,6 +206,84 @@ export function processPoseLandmarks(detectionResults, width, height) {
     timestamp: Date.now(),
     width,
     height,
+  };
+}
+
+/**
+ * Calculate body posture balance score (0 - 100%)
+ */
+export function calculateBodyBalance(stickman) {
+  if (!stickman) return null;
+
+  const { leftShoulder, rightShoulder, leftHip, rightHip, neckBase, pelvis } = stickman;
+  if (!leftShoulder || !rightShoulder) return null;
+
+  // 1. Shoulder Tilt Angle (in degrees from horizontal 0°)
+  const shoulderDx = Math.abs(rightShoulder.x - leftShoulder.x) || 1;
+  const shoulderDy = Math.abs(rightShoulder.y - leftShoulder.y);
+  const shoulderTiltDeg = (Math.atan2(shoulderDy, shoulderDx) * 180) / Math.PI;
+
+  // 2. Hip Tilt Angle (in degrees from horizontal 0°)
+  let hipTiltDeg = 0;
+  if (leftHip && rightHip) {
+    const hipDx = Math.abs(rightHip.x - leftHip.x) || 1;
+    const hipDy = Math.abs(rightHip.y - leftHip.y);
+    hipTiltDeg = (Math.atan2(hipDy, hipDx) * 180) / Math.PI;
+  }
+
+  // 3. Central Line (Head/Neck to Pelvis lateral deviation from vertical 0°)
+  let spineTiltDeg = 0;
+  if (neckBase && pelvis) {
+    const spineDx = Math.abs(neckBase.x - pelvis.x);
+    const spineDy = Math.abs(neckBase.y - pelvis.y) || 1;
+    spineTiltDeg = (Math.atan2(spineDx, spineDy) * 180) / Math.PI;
+  }
+
+  // Scoring components:
+  // - Shoulder score: 0° tilt = 100%, 10° tilt = 30% (7% deduction per deg)
+  const shoulderScore = Math.max(0, 100 - shoulderTiltDeg * 7);
+  // - Hip score: 0° tilt = 100%, 10° tilt = 30%
+  const hipScore = Math.max(0, 100 - hipTiltDeg * 7);
+  // - Spine vertical score: 0° tilt = 100%, 12° tilt = 0% (8% deduction per deg)
+  const spineScore = Math.max(0, 100 - spineTiltDeg * 8);
+
+  // Overall weighted balance percentage
+  const rawScore = (leftHip && rightHip)
+    ? 0.4 * shoulderScore + 0.35 * hipScore + 0.25 * spineScore
+    : 0.6 * shoulderScore + 0.4 * spineScore;
+
+  const score = Math.max(0, Math.min(100, Math.round(rawScore)));
+
+  // Status mapping:
+  // >= 90% -> Green, "Balanced"
+  // 80% - 89% -> Yellow, "Moderate Balance"
+  // < 80% -> Red, "Unbalanced"
+  let status = 'unbalanced';
+  let label = 'Unbalanced';
+  let color = 'red';
+
+  if (score >= 90) {
+    status = 'balanced';
+    label = 'Balanced';
+    color = 'green';
+  } else if (score >= 80) {
+    status = 'slight_tilt';
+    label = 'Moderate Balance';
+    color = 'yellow';
+  } else {
+    status = 'unbalanced';
+    label = 'Unbalanced';
+    color = 'red';
+  }
+
+  return {
+    score,
+    status,
+    label,
+    color,
+    shoulderTiltDeg: Number(shoulderTiltDeg.toFixed(1)),
+    hipTiltDeg: Number(hipTiltDeg.toFixed(1)),
+    spineTiltDeg: Number(spineTiltDeg.toFixed(1)),
   };
 }
 

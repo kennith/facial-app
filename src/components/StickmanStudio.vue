@@ -224,6 +224,43 @@
           </div>
         </div>
 
+        <!-- Body Balance Posture Card -->
+        <div v-if="balance" class="bg-slate-900/80 backdrop-blur-md rounded-2xl border border-slate-800 p-5 shadow-xl space-y-3">
+          <h3 class="text-sm font-bold text-white flex items-center justify-between">
+            <span class="flex items-center gap-2">
+              <Scale class="w-4 h-4 text-emerald-400" />
+              Body Posture Balance
+            </span>
+            <span
+              class="text-[10px] font-mono px-2 py-0.5 rounded-md font-bold border"
+              :class="[
+                balance.score >= 90
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                  : balance.score >= 80
+                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                    : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+              ]"
+            >
+              {{ balance.score }}% {{ balance.label }}
+            </span>
+          </h3>
+
+          <div class="grid grid-cols-3 gap-2 text-center text-xs">
+            <div class="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
+              <span class="text-[10px] text-slate-500">Shoulder Tilt</span>
+              <div class="font-mono font-bold text-slate-200 mt-0.5">{{ balance.shoulderTiltDeg }}°</div>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
+              <span class="text-[10px] text-slate-500">Hip Tilt</span>
+              <div class="font-mono font-bold text-slate-200 mt-0.5">{{ balance.hipTiltDeg }}°</div>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
+              <span class="text-[10px] text-slate-500">Spine Tilt</span>
+              <div class="font-mono font-bold text-slate-200 mt-0.5">{{ balance.spineTiltDeg }}°</div>
+            </div>
+          </div>
+        </div>
+
         <!-- Biomechanical Kinetic Force & Power Card -->
         <div class="bg-slate-900/80 backdrop-blur-md rounded-2xl border border-slate-800 p-5 shadow-xl space-y-3.5">
           <h3 class="text-sm font-bold text-white flex items-center justify-between">
@@ -366,6 +403,7 @@ import {
   SlidersHorizontal,
   Compass,
   Flame,
+  Scale,
 } from 'lucide-vue-next';
 import { drawMatchstickFigure, STICKMAN_COLOR_PRESETS } from '../services/poseDetector';
 import { saveCapture } from '../services/db';
@@ -423,6 +461,10 @@ const renderOptions = reactive({
 const angles = computed(() => {
   const primaryPose = props.poseData?.poses?.[0]?.stickman?.angles;
   return primaryPose || { leftElbow: null, rightElbow: null, leftKnee: null, rightKnee: null };
+});
+
+const balance = computed(() => {
+  return props.poseData?.poses?.[0]?.stickman?.balance || null;
 });
 
 const calculatedForce = computed(() => {
